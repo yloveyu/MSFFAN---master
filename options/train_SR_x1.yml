@@ -1,0 +1,154 @@
+#name: train_rrdb_lpa_Netx1plus_1  # 设置训练任务名称
+name: train_SR_x1__block6_pairdata_FK_light_2
+model_type: RealESRNetModel  # 指定使用的模型类型
+scale: 1  # 设置图像放大的倍数
+num_gpu: auto  # GPU数量 auto: can infer from your visible devices automatically. official: 4 GPUs
+manual_seed: 0  #  设置随机种子，用于确保实验的可重复性
+
+# ----------------- 禁用动态退化合成 ----------------- #
+high_order_degradation: False
+
+gt_size: 256  # 地面真实数据的大小为256×256
+queue_size: 180  # 数据加载列队的大小
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: DIV2K
+    type: RealESRGANPairedDataset  # 关键修改：使用配对数据集类型
+    dataroot_gt: datasets/DF2K # HR图像路径
+    dataroot_lq: datasets/DF2K  # LR图像路径
+#    meta_info: datasets/DF2K/meta_info/meta_info_DOTA_sub_pair.txt  # 配对的meta信息
+    meta_info: datasets/DF2K/meta_info/meta_info_FK_pair.txt  # 配对的meta信息
+    io_backend:
+      type: disk
+
+    gt_size: 256
+    # 是否使用水平翻转和旋转数据增强
+    use_hflip: True
+    use_rot: False
+
+    # data loader
+    # 是否打乱数据，每个GPU的工作进程数，每个GPU的批量大小
+    use_shuffle: true
+    num_worker_per_gpu: 4
+    batch_size_per_gpu: 12  # 12  9 可被180整除
+    # 数据集扩大的比例
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+
+##  # Uncomment these for validation
+  val:
+    name: validation
+    type: PairedImageDataset
+    dataroot_gt: scripts/data/val # 这一行设置了地面真实（Ground Truth）图像的根目录路径
+    dataroot_lq: scripts/data/val_lr
+    io_backend:
+      type: disk
+
+# network structures
+# 网络结构配置，包括类型、输入和输出
+network_g:
+  type: RRDBNet
+  num_in_ch: 3
+  num_out_ch: 3
+  num_feat: 48  # 64
+  num_block: 6  # 原始数值23;gsau 10; 23；双通路融合15为最佳
+  num_grow_ch: 32
+  scale: 1  #超分4倍时没有
+
+
+# path
+path:
+  pretrain_network_g: weights/1.pth # 设置预训练生成网络的路径
+  param_key_g: params_ema  # 指定加载预训练模型时使用的参数关键字
+  strict_load_g: false  # 是否严格加载预训练模型（只有当预训练模型中的键与当前模型完全匹配时才加载）
+  resume_state: ~  # 设置恢复训练状态的路径，波浪号(~)表示没有提供路径，即不恢复状态
+
+# training settings
+train:
+  ema_decay: 0.999  # 设置指数移动平均（EMA）的衰减率
+  optim_g:
+    type: Adam  # 设置优化器类型为Adam
+    lr: !!float 2e-4  # 设置学习率为2e-4，!!float确保值被解析为浮点数
+    weight_decay: 0  # 设置权重衰减为0，也就是说不使用权重衰减
+    betas: [0.9, 0.99]  # 设置优化器的beta1和beta2的超参数
+
+  # 设置学习率调度器类型为MultiStepLR
+  scheduler:
+    type: MultiStepLR
+#    milestones: [1000000]  # 设置学习率衰减的里程碑迭代次数
+    milestones: [40000]
+    gamma: 0.5  # 设置学习率衰减的比率
+
+#  total_iter: 1000000  # 设置总的迭代次数
+  total_iter: 40000
+  warmup_iter: -1  # no warm up 设置预热迭代次数，-1表示不使用预热
+
+#  losses
+  # 设置像素损失类型为L1损失
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1.0  # 设置像素损失权重
+    reduction: mean  # 设置损失函数的缩减方式为平均值
+
+  laplacian_opt:
+    type: LaplacianLoss
+    loss_weight: 1.0
+    reduction: mean
+    loss_type: l1
+
+#  # perceptual loss (content and style losses)
+#  perceptual_opt: # 感知损失
+#    type: PerceptualLoss
+#    layer_weights: # 定义了网络中各层的权重
+#      # before relu
+#      'conv1_2': 0.1
+#      'conv2_2': 0.1
+#      'conv3_4': 1
+#      'conv4_4': 1
+#      'conv5_4': 1
+#    vgg_type: vgg19  # 指定了用于计算感知损失的预训练网络类型
+#    use_input_norm: true  # 在计算感知损失之前，是否对输入图像进行标准化
+#    perceptual_weight: !!float 1.0  # 对总损失的贡献度
+#    style_weight: 0  # 风格损失
+#    range_norm: false  # 是否对输入图像进行范围归一化
+#    criterion: l1  # 采用L1损失计算感知损失
+
+
+# Uncomment these for validation
+# validation settings
+val:
+#   val_freq: !!float 5e3  # 设置验证的评率（迭代次数），!!float确保值被解析为浮点数
+   val_freq: !!float 500
+   save_img: False  # 是否保存验证过程中的图像
+
+   metrics:
+     psnr: # metric name
+       type: calculate_psnr  # 验证指标为峰值信噪比
+       crop_border: 4  # 设置在计算PSNR时裁剪图像边界的像素数
+       test_y_channel: false  # 设置是否仅测试Y通道的PSNR
+
+     ssim: # metric name
+       type: calculate_ssim
+       crop_border: 4
+       test_y_channel: false
+
+
+# logging settings
+logger:
+#  print_freq: 100  # 设置打印训练信息的频率（迭代次数）
+  print_freq: 100
+#  save_checkpoint_freq: !!float 5e3  # 设置保存检查点的频率（迭代次数）
+  save_checkpoint_freq: !!float 1000 # 1000
+  use_tb_logger: true  # 设置是否使用TensorBoard日志记录器
+  # 设置Weights & Biases（wandb）项目的名称和运行的恢复ID，波浪号(~)表示未指定
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+# 设置分布式训练的后端为NCCL
+dist_params:
+  backend: nccl
+  port: 29500  # 设置分布式训练使用的端口
